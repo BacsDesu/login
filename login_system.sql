@@ -20,16 +20,22 @@ SET time_zone = "+00:00";
 --
 -- Database: `login_system`
 --
+CREATE DATABASE IF NOT EXISTS `login_system` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+USE `login_system`;
+
+-- --------------------------------------------------------
 
 DELIMITER $$
 --
 -- Procedures
 --
+DROP PROCEDURE IF EXISTS `AttemptLogin`$$
 CREATE DEFINER=`root`@`localhost` PROCEDURE `AttemptLogin` (IN `p_email` VARCHAR(255), IN `p_password` VARCHAR(255), IN `p_ip_address` VARCHAR(45), IN `p_user_agent` TEXT)   BEGIN
     DECLARE user_exists INT;
     DECLARE user_password VARCHAR(255);
     DECLARE user_id INT;
     DECLARE is_success BOOLEAN DEFAULT FALSE;
+    DECLARE attempt_id INT;
     
     -- Check if user exists and get password
     SELECT id, password INTO user_id, user_password 
@@ -42,6 +48,9 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `AttemptLogin` (IN `p_email` VARCHAR
     INSERT INTO login_attempts (email, ip_address, success, user_agent)
     VALUES (p_email, p_ip_address, is_success, p_user_agent);
     
+    -- Get the ID of the just-inserted attempt
+    SET attempt_id = LAST_INSERT_ID();
+    
     IF user_exists = 1 THEN
         -- Verify password (using bcrypt)
         IF user_password = p_password THEN
@@ -50,11 +59,10 @@ CREATE DEFINER=`root`@`localhost` PROCEDURE `AttemptLogin` (IN `p_email` VARCHAR
             -- Update last login
             UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = user_id;
             
-            -- Update login attempt to success
+            -- Update login attempt to success using the attempt_id
             UPDATE login_attempts 
             SET success = TRUE 
-            WHERE email = p_email 
-            AND attempt_time = (SELECT MAX(attempt_time) FROM login_attempts WHERE email = p_email);
+            WHERE id = attempt_id;
             
             SELECT 'Login successful' AS message, user_id AS user_id, TRUE AS success;
         ELSE
@@ -70,36 +78,27 @@ DELIMITER ;
 -- --------------------------------------------------------
 
 --
--- Stand-in structure for view `active_users`
--- (See below for the actual view)
---
-CREATE TABLE `active_users` (
-`id` int(11)
-,`email` varchar(255)
-,`full_name` varchar(255)
-,`created_at` timestamp
-,`last_login` timestamp
-);
-
--- --------------------------------------------------------
-
---
 -- Table structure for table `login_attempts`
 --
 
+DROP TABLE IF EXISTS `login_attempts`;
 CREATE TABLE `login_attempts` (
-  `id` int(11) NOT NULL,
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `email` varchar(255) NOT NULL,
   `ip_address` varchar(45) NOT NULL,
   `attempt_time` timestamp NOT NULL DEFAULT current_timestamp(),
   `success` tinyint(1) DEFAULT 0,
-  `user_agent` text DEFAULT NULL
+  `user_agent` text DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_login_attempts_email` (`email`),
+  KEY `idx_login_attempts_time` (`attempt_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
 -- Triggers `login_attempts`
 --
 DELIMITER $$
+DROP TRIGGER IF EXISTS `clean_old_login_attempts`$$
 CREATE TRIGGER `clean_old_login_attempts` BEFORE INSERT ON `login_attempts` FOR EACH ROW BEGIN
     -- Delete attempts older than 30 days
     DELETE FROM login_attempts 
@@ -111,33 +110,12 @@ DELIMITER ;
 -- --------------------------------------------------------
 
 --
--- Table structure for table `password_resets`
---
-
-CREATE TABLE `password_resets` (
-  `id` int(11) NOT NULL,
-  `email` varchar(255) NOT NULL,
-  `token` varchar(255) NOT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
-  `expires_at` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
---
--- Dumping data for table `password_resets`
---
-
-INSERT INTO `password_resets` (`id`, `email`, `token`, `created_at`, `expires_at`) VALUES
-(17, 'preciousgracebagaforo@gmail.com', '414644', '2026-02-13 02:34:59', '2026-02-12 19:49:59'),
-(20, 'bacalingmarkjefferson@gmail.com', '839292', '2026-02-13 02:49:24', '2026-02-12 20:04:24');
-
--- --------------------------------------------------------
-
---
 -- Table structure for table `users`
 --
 
+DROP TABLE IF EXISTS `users`;
 CREATE TABLE `users` (
-  `id` int(11) NOT NULL,
+  `id` int(11) NOT NULL AUTO_INCREMENT,
   `email` varchar(255) NOT NULL,
   `password` varchar(255) NOT NULL,
   `full_name` varchar(255) NOT NULL,
@@ -145,7 +123,11 @@ CREATE TABLE `users` (
   `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
   `last_login` timestamp NULL DEFAULT NULL,
   `is_active` tinyint(1) DEFAULT 1,
-  `remember_token` varchar(255) DEFAULT NULL
+  `remember_token` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `email` (`email`),
+  KEY `idx_users_email` (`email`),
+  KEY `idx_users_active` (`is_active`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -161,72 +143,38 @@ INSERT INTO `users` (`id`, `email`, `password`, `full_name`, `created_at`, `upda
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `password_resets`
+--
+
+DROP TABLE IF EXISTS `password_resets`;
+CREATE TABLE `password_resets` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `email` varchar(255) NOT NULL,
+  `token` varchar(255) NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `expires_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `idx_password_resets_token` (`token`),
+  KEY `idx_password_resets_email` (`email`),
+  CONSTRAINT `password_resets_ibfk_1` FOREIGN KEY (`email`) REFERENCES `users` (`email`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Dumping data for table `password_resets`
+--
+
+INSERT INTO `password_resets` (`id`, `email`, `token`, `created_at`, `expires_at`) VALUES
+(17, 'preciousgracebagaforo@gmail.com', '414644', '2026-02-13 02:34:59', '2026-02-12 19:49:59'),
+(20, 'bacalingmarkjefferson@gmail.com', '839292', '2026-02-13 02:49:24', '2026-02-12 20:04:24');
+
+-- --------------------------------------------------------
+
+--
 -- Structure for view `active_users`
 --
-DROP TABLE IF EXISTS `active_users`;
-
+DROP VIEW IF EXISTS `active_users`;
 CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `active_users`  AS SELECT `users`.`id` AS `id`, `users`.`email` AS `email`, `users`.`full_name` AS `full_name`, `users`.`created_at` AS `created_at`, `users`.`last_login` AS `last_login` FROM `users` WHERE `users`.`is_active` = 1 ;
 
---
--- Indexes for dumped tables
---
-
---
--- Indexes for table `login_attempts`
---
-ALTER TABLE `login_attempts`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `idx_login_attempts_email` (`email`),
-  ADD KEY `idx_login_attempts_time` (`attempt_time`);
-
---
--- Indexes for table `password_resets`
---
-ALTER TABLE `password_resets`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `idx_password_resets_token` (`token`),
-  ADD KEY `idx_password_resets_email` (`email`);
-
---
--- Indexes for table `users`
---
-ALTER TABLE `users`
-  ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `email` (`email`),
-  ADD KEY `idx_users_email` (`email`),
-  ADD KEY `idx_users_active` (`is_active`);
-
---
--- AUTO_INCREMENT for dumped tables
---
-
---
--- AUTO_INCREMENT for table `login_attempts`
---
-ALTER TABLE `login_attempts`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT for table `password_resets`
---
-ALTER TABLE `password_resets`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=21;
-
---
--- AUTO_INCREMENT for table `users`
---
-ALTER TABLE `users`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
-
---
--- Constraints for dumped tables
---
-
---
--- Constraints for table `password_resets`
---
-ALTER TABLE `password_resets`
-  ADD CONSTRAINT `password_resets_ibfk_1` FOREIGN KEY (`email`) REFERENCES `users` (`email`) ON DELETE CASCADE;
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
